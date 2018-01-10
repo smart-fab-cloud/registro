@@ -1,7 +1,9 @@
 package ifts.registro;
 
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import javax.ws.rs.Consumes;
 import javax.ws.rs.DELETE;
 import javax.ws.rs.GET;
@@ -12,8 +14,11 @@ import javax.ws.rs.PathParam;
 import javax.ws.rs.Produces;
 import javax.ws.rs.QueryParam;
 import javax.ws.rs.core.MediaType;
+import javax.ws.rs.core.Response;
+import javax.ws.rs.core.UriBuilder;
 
 @Path("/registro")
+@Produces(MediaType.APPLICATION_JSON)
 public class Registro {
     
     private List<String> materie;
@@ -21,12 +26,36 @@ public class Registro {
     
     public Registro(List<String> materie) {
         this.materie = materie;
-        this.registro = new ArrayList<StudenteConVoti>();
+        registro = new ArrayList<StudenteConVoti>();
     }
     
     @POST
     @Consumes(MediaType.APPLICATION_JSON)
-    public void aggiungiStudente(Studente s) {
+    public Response aggiungiStudente(Studente s) {
+        // Se la matricola non è positiva
+        if(s.getMatricola() <= 0)
+            // Restituisce un messaggio di errore
+            return Response.status(Response.Status.BAD_REQUEST)
+                        .entity("La matricola deve essere positiva.")
+                        .type(MediaType.TEXT_PLAIN)
+                        .build();
+        
+        // Se cognome e/o nome sono vuoti
+        if(s.getCognome().isEmpty() || s.getNome().isEmpty())
+            // Restituisce un messaggio di errore
+            return Response.status(Response.Status.BAD_REQUEST)
+                        .entity("Cognome e nome non possono essere vuoti.")
+                        .type(MediaType.TEXT_PLAIN)
+                        .build();
+        
+        // Se lo studente è già presente nel registro
+        if (indiceStudente(s.getMatricola()) > -1)
+            // Restituisce un messaggio di errore
+            return Response.status(Response.Status.CONFLICT)
+                        .entity(s.getMatricola() + " già nel registro.")
+                        .type(MediaType.TEXT_PLAIN)
+                        .build();
+        
         // Costruisce un record studente-voti "sv" a partire da "s"
         StudenteConVoti sv = new StudenteConVoti(
             s.getMatricola(),
@@ -35,14 +64,19 @@ public class Registro {
             this.materie
         );
         // Aggiunge "sv" al "registro"
-        this.registro.add(sv);
+        registro.add(sv);
+        // e restituisce la sua URI
+        URI svUri = UriBuilder.fromResource(Registro.class)
+                        .path(String.valueOf(sv.getMatricola()))
+                        .build();
+        return Response.created(svUri).build();
     }
     
     // Metodo privato per recuperare l'indice dello studente avente la 
     // "matricola" specifica nel "registro"
     private int indiceStudente(int matricola) {
-        for (int i=0; i<this.registro.size(); i++)
-            if (this.registro.get(i).getMatricola()==matricola)
+        for (int i=0; i<registro.size(); i++)
+            if (registro.get(i).getMatricola()==matricola)
                 return i;
         return -1;
     }
@@ -50,54 +84,99 @@ public class Registro {
     @GET
     @Produces(MediaType.APPLICATION_JSON)
     @Path("/{matricola}")
-    public StudenteConVoti recuperaStudente(
-        @PathParam("matricola") int matricola
-    ) {
+    public Response recuperaStudente(@PathParam("matricola") int matricola) {
         // Recupera l'indice dello studente desiderato
         int i = indiceStudente(matricola);
-        // Se lo studente è presente
-        if (i>-1)
-            // ne restituisce la rappresentazione
-            return this.registro.get(i);
-        // Altrimenti, ritorna "null"
-        return null;
+        
+        // Se lo studente non è presente
+        if (i == -1)
+            // Restituisce un messaggio di errore
+            return Response.status(Response.Status.NOT_FOUND)
+                        .entity(matricola + " non trovato.")
+                        .type(MediaType.TEXT_PLAIN)
+                        .build();
+        
+        // Restituisce lo studente desiderato
+        return Response.ok(registro.get(i)).build();
     }
     
     @PUT
     @Path("/{matricola}")
-    public void aggiungiVoto(
+    public Response aggiungiVoto(
         @PathParam("matricola") int matricola,
-        @QueryParam("materia") String materia,
-        @QueryParam("voto") int voto
+        @QueryParam("materia") Optional<String> materia,
+        @QueryParam("voto") Optional<Integer> voto
     ) {
+        // Se la matricola è negativa
+        if(matricola <= 0)
+            // Restituisce un messaggio di errore
+            return Response.status(Response.Status.BAD_REQUEST)
+                        .entity("La matricola deve essere positiva.")
+                        .type(MediaType.TEXT_PLAIN)
+                        .build();
+            
+        // Se materia o voto non sono indicati
+        if(!materia.isPresent() || !voto.isPresent())
+            // Restituisce un messaggio di errore
+            return Response.status(Response.Status.BAD_REQUEST)
+                        .entity("Materia e voto devono essere indicati.")
+                        .type(MediaType.TEXT_PLAIN)
+                        .build();
+        
+        // Se la materia non è tra quelle riconosciute
+        if(!materie.contains(materia.get()))
+            // Restituisce un messaggio di errore
+            return Response.status(Response.Status.BAD_REQUEST)
+                        .entity("Materia non riconosciuta.")
+                        .type(MediaType.TEXT_PLAIN)
+                        .build();
+        
+        // Se il voto non è un intero tra 1 e 10
+        if(voto.get() < 1 || voto.get() > 10)
+            // Restituisce un messaggio di errore
+            return Response.status(Response.Status.BAD_REQUEST)
+                        .entity("Il voto deve essere compreso tra 1 e 10.")
+                        .type(MediaType.TEXT_PLAIN)
+                        .build();
+        
         // Recupera l'indice dello studente desiderato
         int i = indiceStudente(matricola);
-        // Se lo studente è presente
-        if (i>-1) {
-            // recupera la lista dei voti nella materia indicata
-            List<Integer> votiMateria = 
-                this.registro.get(i).getVoti().get(materia);
-            // Verifica che 
-            // - "voto" sia un numero tra 1 e 10 e che 
-            // - "materia" sia una materia tra quelle registrabili
-            //   NB: Se "materia" non fosse tra quelle registrabili,
-            //   "votiMateria" sarebbe "null"
-            // Se così è, aggiunge il nuovo "voto" tra quelli registrati
-            if (voto>=1 && voto<=10 && votiMateria!=null)
-                votiMateria.add(voto);
-        }
+        
+        // Se lo studente non è presente
+        if (i == -1)
+            // Restituisce un messaggio di errore
+            return Response.status(Response.Status.NOT_FOUND)
+                        .entity(matricola + " non trovato.")
+                        .type(MediaType.TEXT_PLAIN)
+                        .build();
+        
+        // Se lo studente è presente, aggiunge il nuovo voto alla lista 
+        // dei suoi voti nella materia indicata
+        List<Integer> voti  = registro.get(i).getVoti().get(materia.get());
+        voti.add(voto.get());
+        return Response.ok(registro.get(i)).build();
     }
     
     @DELETE
     @Path("/{matricola}")
-    public void eliminaStudente(
-        @PathParam("matricola") int matricola
-    ) {
-        // Recupera l'indice dello studente desiderato
+    public Response eliminaStudente(@PathParam("matricola") int matricola) {
+        // Recupera l'indice dello studente da eliminare
         int i = indiceStudente(matricola);
-        // Se lo studente è presente
-        if (i>-1)
-            // lo elimina dal registro
-            this.registro.remove(i);
+        
+        // Se lo studente non è presente
+        if (i == -1)
+            // Restituisce un messaggio di errore
+            return Response.status(Response.Status.NOT_FOUND)
+                        .entity(matricola + " non trovato.")
+                        .type(MediaType.TEXT_PLAIN)
+                        .build();
+        
+        // Elimina lo studente 
+        registro.remove(i);
+        // e restituisce "200 OK"
+        return Response.ok()
+                    .entity(matricola + "eliminato.")
+                    .type(MediaType.TEXT_PLAIN)
+                    .build();
     }
 }
